@@ -1,0 +1,176 @@
+---
+title: "作業二"
+author: "7110021065 吳憲中"
+date: '2022-11-21'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(stringr)
+library(nleqslv)
+```
+
+```{r}
+load("C:/Users/stran/OneDrive/桌面/金融市場/作業二data/深圳A股_DTD資料一_new.rda")
+load("C:/Users/stran/OneDrive/桌面/金融市場/作業二data/深圳A股_DTD資料二_new.rda")
+load("C:/Users/stran/OneDrive/桌面/金融市場/作業二data/中國10年期公債殖利率.rda")
+
+#更改欄位名稱
+names_sz_dtd1_new <- c("證券代碼","年月日","總市值(千元)","公司總市值(千元)","日報酬率")
+colnames(sz_dtd1_new) <- names_sz_dtd1_new
+
+#將證券代碼拆分成兩欄位
+res1 <- str_split(sz_dtd1_new$證券代碼," ")
+companyId <- c()
+companyName <- c()
+for (i in 1:length(res1)) {
+  companyId[i] <- res1[[i]][1]
+  companyName[i] <- res1[[i]][2]
+}
+sz_dtd1_new$代碼 <- companyId
+sz_dtd1_new$公司名稱 <- companyName
+sz_dtd1_new$證券代碼 <- NULL
+sz_dtd1_new <- sz_dtd1_new[,c(5,6,1:4)]
+
+res2 <- str_split(sz_dtd2_new$證券代碼," ")
+companyId <- c()
+companyName <- c()
+for (i in 1:length(res2)) {
+  companyId[i] <- res2[[i]][1]
+  companyName[i] <- res2[[i]][2]
+}
+sz_dtd2_new$代碼 <- companyId
+sz_dtd2_new$公司名稱 <- companyName
+sz_dtd2_new$證券代碼 <- NULL
+sz_dtd2_new <- sz_dtd2_new[,c(5,6,1:4)]
+
+#改變資料型態
+sz_dtd1_new$`總市值(千元)` <- as.numeric(sz_dtd1_new$`總市值(千元)`)
+sz_dtd1_new$`公司總市值(千元)` <- as.numeric(sz_dtd1_new$`公司總市值(千元)`)
+sz_dtd1_new$日報酬率 <- as.numeric(sz_dtd1_new$日報酬率)
+sz_dtd2_new$流動負債 <- as.numeric(sz_dtd2_new$流動負債)
+sz_dtd2_new$非流動負債合計 <- as.numeric(sz_dtd2_new$非流動負債合計)
+sz_dtd2_new$負債合計 <- as.numeric(sz_dtd2_new$負債合計)
+
+#處理缺失值
+sz_dtd2_new <- sz_dtd2_new[-which(is.na(sz_dtd2_new$流動負債)&is.na(sz_dtd2_new$非流動負債合計)),]
+
+
+#合併日資料與季資料
+sz_dtd1_new$年月 <- sz_dtd1_new$年月日
+sz_dtd1_new$年月 <- as.character(sz_dtd1_new$年月)
+sz_dtd2_new$年月 <- as.character(sz_dtd2_new$年月)
+sz_dtd1_new$年月 <- str_sub(sz_dtd1_new$年月,start=1,end=6) 
+data <- merge(sz_dtd1_new,sz_dtd2_new,by=c("代碼","年月"),all.x = TRUE)
+data <- na.omit(data)
+rename_data <- colnames(data)
+rename_data[3] <- "公司名稱"
+colnames(data) <- rename_data
+data <- data[,-8]
+data_sz <- data[,c(1,3,4,2,5:10)]
+#save(data_sz,file = "C:/Users/stran/OneDrive/桌面/金融市場/作業二data/深圳A股_DTD.rda")
+
+#合併上海以及深圳交易所資料
+load("C:/Users/stran/OneDrive/桌面/金融市場/作業二data/上海A股_DTD.rda")
+rename_data_sh <- colnames(data_sh)
+rename_data_sh[2] <- "公司名稱"
+colnames(data_sh) <- rename_data_sh
+data_sh <- data_sh[,c(1,3,4,2,5:10)]
+data <- rbind(data_sz,data_sh)
+
+#計算變數
+data$VE <- data$`公司總市值(千元)`
+data %>% group_by(公司名稱) %>% 
+  mutate(SE=sd(日報酬率)) -> data
+rf$年 <- as.character(rf$年)
+colnames(rf) <- c("年","r")
+data$年 <- str_sub(data$年月,start=1,end=4) 
+data <- merge(data,rf,by="年",all.x = TRUE) #併入十年期公債殖利率
+load("C:/Users/stran/OneDrive/桌面/金融市場/作業二data/上海、深圳A股_帳面資產價值.rda")
+bv_dtd$代碼 <- NULL
+bv_dtd$年月 <- as.character(bv_dtd$年月)
+bv_dtd$資產總計 <- as.numeric(bv_dtd$資產總計)
+data <- merge(data,bv_dtd,by=c("公司名稱","年月"),all.x=TRUE) #併入帳面資產價值
+data <- data[-which(data$資產總計 <= 0),]
+data$VE <- round(data$VE/data$資產總計,4)
+data$D <- round((data$流動負債+0.5*data$非流動負債合計)/data$資產總計,4)
+data <- data[-which(data$D <= 0),]
+data <- data[-which(data$VE == 0),]
+data <- data[-which(data$SE <= 0),]
+data <- na.omit(data)
+
+# b <- sz_dtd1$公司名稱 %in% sz_dtd2_new$公司名稱
+# c <- sz_dtd2_new$公司名稱 %in% sz_dtd1$公司名稱
+# t1 <- 0
+# f1 <- 0
+# t2 <- 0
+# f2 <- 0
+# for(i in 1:length(b)){
+#   if (b[i]==TRUE){
+#     t1 <- t1+1
+#   }
+#   else{
+#     f1 <- f1+1
+#   }
+# }
+# for(x in 1:length(c)){
+#   if (c[x]==TRUE){
+#     t2 <- t2+1
+#   }
+#   else{
+#     f2 <- f2+1
+#   }
+# }
+# unique(sz_dtd1$公司名稱)
+# unique(sz_dtd2_new$公司名稱)
+```
+
+```{r}
+#計算DTD
+DTD=function(VE, SE, r, t, D){
+  VA_SA_slv <- function(x){
+    y <- NULL
+    d1 <- (log(x[1]/D) + (r+x[2]^2/2)*t)/(x[2]*sqrt(t))
+    d2 <- d1 - x[2]*sqrt(t)
+    y[1] <- x[1]*pnorm(d1) - D*exp((-r)*t)*pnorm(d2) - VE
+    y[2] <- x[1]*pnorm(d1)*x[2] - VE*SE
+    return(y) 
+  }
+slv <- nleqslv(c(VE,SE), VA_SA_slv, control = list(btol = .0001))
+VA <-  slv$x[1] # value of assets
+SA <-  slv$x[2] # volatility of assets
+#計算DTD
+dtd <-  (log(VA/D) + (r - SA^2/2)*t)/(SA*sqrt(t))
+return(dtd)
+}
+
+dtd_list <- list()
+for(i in 1:nrow(data)){
+  #利用迴圈輸入參數
+  VE <- data$VE[i]
+  SE <- data$SE[i]
+  r <- data$r[i]
+  t <- 1
+  D <- data$D[i]
+  #回傳DTD值
+  dtd_list[i] <- DTD(VE, SE, r, t, D)
+}
+data$dtd <- dtd_list
+data$dtd <- as.numeric(data$dtd)
+data$dtd <- round(data$dtd,4)
+dtd_data_final <- data
+#save(dtd_data_final,file = "C:/Users/stran/OneDrive/桌面/金融市場/作業二data/結果.rda")
+
+# f <- function (x) {
+#   VA = x [1]
+#   SA = x [2]
+#   d1 = (log(VA/D) + (r - SA^2/2)*t) /(SA*sqrt(t))
+#   d2 = d1 + SA* sqrt (t)
+#   e1 = VE - (VA* pnorm (d2) - exp( -r*t) *D* pnorm (d1) )
+#   e2 = SE * VE - pnorm (d2) *SA*VA
+#   return (e1^2 + e2^2)
+# }
+#unique(dtd_data_final$公司名稱)
+```
+
